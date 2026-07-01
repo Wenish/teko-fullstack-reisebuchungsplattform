@@ -42,6 +42,24 @@ npm run dev
 Frontend URL:
 - App: http://127.0.0.1:5173
 
+## Tests ausfuehren
+
+Backend Unit Tests:
+
+```bash
+cd backend
+source .venv/bin/activate
+python manage.py test
+```
+
+Frontend Unit Tests:
+
+```bash
+cd frontend
+npm install
+npm run test:run
+```
+
 ## Kernfunktionen
 
 - Angebote suchen und filtern (Typ, Ort, Preis, Bewertung)

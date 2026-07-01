@@ -109,3 +109,38 @@ class BookingApiTests(TestCase):
         me = self.client.get("/api/auth/me/", **{"HTTP_AUTHORIZATION": f"Basic {token}"})
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["username"], "anna")
+
+    def test_me_requires_authentication(self):
+        response = self.client.get("/api/auth/me/")
+        self.assertEqual(response.status_code, 401)
+
+    def test_bookings_list_returns_only_authenticated_users_bookings(self):
+        other_user = User.objects.create_user(
+            username="other",
+            email="other@example.com",
+            password="secret123",
+        )
+
+        Booking.objects.create(
+            user=self.user,
+            offer=self.offer,
+            customer_name="Max Muster",
+            customer_email="max@example.com",
+            quantity=1,
+            total_price=Decimal("200.00"),
+        )
+        Booking.objects.create(
+            user=other_user,
+            offer=self.offer,
+            customer_name="Other User",
+            customer_email="other@example.com",
+            quantity=1,
+            total_price=Decimal("200.00"),
+        )
+
+        response = self.client.get("/api/bookings/", **self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["username"], "max")
