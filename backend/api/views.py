@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.conf import settings
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
@@ -18,6 +20,15 @@ from .serializers import (
     RegisterSerializer,
 )
 from .services import calculate_refund
+
+
+def parse_decimal_param(value):
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(value)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
 
 def set_auth_cookies(response, access_token, refresh_token=None):
@@ -131,12 +142,23 @@ class OfferViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(offer_type=offer_type)
         if location:
             queryset = queryset.filter(location__icontains=location)
-        if min_rating:
-            queryset = queryset.filter(rating__gte=min_rating)
-        if min_price:
-            queryset = queryset.filter(base_price__gte=min_price)
-        if max_price:
-            queryset = queryset.filter(base_price__lte=max_price)
+        parsed_min_rating = parse_decimal_param(min_rating)
+        parsed_min_price = parse_decimal_param(min_price)
+        parsed_max_price = parse_decimal_param(max_price)
+
+        if min_rating and parsed_min_rating is None:
+            return queryset.none()
+        if min_price and parsed_min_price is None:
+            return queryset.none()
+        if max_price and parsed_max_price is None:
+            return queryset.none()
+
+        if parsed_min_rating is not None:
+            queryset = queryset.filter(rating__gte=parsed_min_rating)
+        if parsed_min_price is not None:
+            queryset = queryset.filter(base_price__gte=parsed_min_price)
+        if parsed_max_price is not None:
+            queryset = queryset.filter(base_price__lte=parsed_max_price)
 
         return queryset
 

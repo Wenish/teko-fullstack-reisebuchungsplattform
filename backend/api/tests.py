@@ -50,6 +50,18 @@ class BookingApiTests(TestCase):
             availability_factor=Decimal("1.00"),
             available_units=5,
         )
+        self.offer_two = Offer.objects.create(
+            provider=provider,
+            title="Bern - London",
+            offer_type=Offer.OfferType.FLIGHT,
+            location="London",
+            rating=Decimal("4.8"),
+            base_price=Decimal("300.00"),
+            season_factor=Decimal("1.00"),
+            demand_factor=Decimal("1.00"),
+            availability_factor=Decimal("1.00"),
+            available_units=5,
+        )
 
     def _csrf_headers(self):
         self.client.get("/api/auth/csrf/")
@@ -186,3 +198,114 @@ class BookingApiTests(TestCase):
         data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["username"], "max")
+
+    def test_offers_filters_reject_sqli_like_numeric_payloads(self):
+        payloads = [
+            "1 OR 1=1",
+            "0; DROP TABLE api_offer;--",
+            "' OR '1'='1",
+        ]
+
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                response = self.client.get(f"/api/offers/?min_price={payload}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json(), [])
+
+    def test_offers_location_sqli_payload_is_treated_as_plain_text(self):
+        response = self.client.get("/api/offers/?location=' OR '1'='1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
+    def test_booking_create_accepts_sqli_like_strings_as_data(self):
+        self._login()
+
+        response = self.client.post(
+            "/api/bookings/",
+            {
+                "offer_id": self.offer.id,
+                "customer_name": "Robert'); DROP TABLE students;--",
+                "customer_email": "safe@example.com",
+                "quantity": 1,
+            },
+            content_type="application/json",
+            **self._csrf_headers(),
+        )
+        self.assertEqual(response.status_code, 201)
+
+        booking = Booking.objects.get()
+        self.assertEqual(booking.customer_name, "Robert'); DROP TABLE students;--")
+
+    def test_booking_fields_with_xss_payload_are_returned_as_text(self):
+        self._login()
+        xss_payload = "<script>alert('xss')</script>"
+
+        create = self.client.post(
+            "/api/bookings/",
+            {
+                "offer_id": self.offer.id,
+                "customer_name": xss_payload,
+                "customer_email": "max@example.com",
+                "quantity": 1,
+            },
+            content_type="application/json",
+            **self._csrf_headers(),
+        )
+        self.assertEqual(create.status_code, 201)
+
+        booking_id = Booking.objects.latest("id").id
+        cancel = self.client.post(
+            f"/api/bookings/{booking_id}/cancel/",
+            {"reason": xss_payload},
+            content_type="application/json",
+            **self._csrf_headers(),
+        )
+        self.assertEqual(cancel.status_code, 200)
+        self.assertEqual(cancel.json()["booking"]["customer_name"], xss_payload)
+        self.assertEqual(cancel.json()["cancellation"]["reason"], xss_payload)
+
+    def test_user_cannot_access_or_mutate_another_users_booking(self):
+        foreign_booking = Booking.objects.create(
+            user=self.user,
+            offer=self.offer,
+            customer_name="Max Muster",
+            customer_email="max@example.com",
+            quantity=1,
+            total_price=Decimal("200.00"),
+        )
+
+        User.objects.create_user(
+            username="attacker",
+            email="attacker@example.com",
+            password="hack1234",
+        )
+        attacker_client = Client(enforce_csrf_checks=True)
+        attacker_client.get("/api/auth/csrf/")
+        attacker_login = attacker_client.post(
+            "/api/auth/login/",
+            {"username": "attacker", "password": "hack1234"},
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=attacker_client.cookies["csrftoken"].value,
+        )
+        self.assertEqual(attacker_login.status_code, 200)
+
+        detail = attacker_client.get(f"/api/bookings/{foreign_booking.id}/")
+        self.assertEqual(detail.status_code, 404)
+
+        attacker_client.get("/api/auth/csrf/")
+        pay = attacker_client.post(
+            f"/api/bookings/{foreign_booking.id}/pay/",
+            {},
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=attacker_client.cookies["csrftoken"].value,
+        )
+        self.assertEqual(pay.status_code, 404)
+
+        attacker_client.get("/api/auth/csrf/")
+        cancel = attacker_client.post(
+            f"/api/bookings/{foreign_booking.id}/cancel/",
+            {"reason": "unauthorized"},
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=attacker_client.cookies["csrftoken"].value,
+        )
+        self.assertEqual(cancel.status_code, 404)

@@ -31,4 +31,15 @@ describe("Header", () => {
     expect(screen.getByText("Logout")).toBeInTheDocument();
     expect(screen.getByText("Eingeloggt als max")).toBeInTheDocument();
   });
+
+  it("renders malicious username as text, not as HTML", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Header authUser={{ id: 1, username: "<img src=x onerror=alert(1)>", email: "x@example.com" }} onLogout={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText("Eingeloggt als <img src=x onerror=alert(1)>")).toBeInTheDocument();
+    expect(container.querySelector("img[src='x']")).not.toBeInTheDocument();
+  });
 });
