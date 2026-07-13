@@ -37,7 +37,7 @@ export default function AuthPage({ authUser, authMessage, onDismissAuthMessage, 
     <section className="mx-auto grid w-full max-w-6xl gap-6 px-4 py-8 md:grid-cols-2">
       <form onSubmit={handleRegister} className="border border-slate-200 bg-white p-5 shadow-flat">
         <h2 className="text-xl font-bold">Registrieren</h2>
-        <p className="mt-1 text-sm text-slate-600">Neuen Account für Buchungen erstellen.</p>
+        <p className="mt-1 text-sm text-slate-600">Neuen Account für die sichere Cookie-Session erstellen.</p>
 
         <div className="mt-4 space-y-3">
           <div>
@@ -85,7 +85,7 @@ export default function AuthPage({ authUser, authMessage, onDismissAuthMessage, 
 
       <form onSubmit={handleLogin} className="border border-slate-200 bg-white p-5 shadow-flat">
         <h2 className="text-xl font-bold">Einloggen</h2>
-        <p className="mt-1 text-sm text-slate-600">Basic Auth Login für geschützte Buchungsfunktionen.</p>
+        <p className="mt-1 text-sm text-slate-600">JWT Login über HttpOnly-Cookies für geschützte Buchungsfunktionen.</p>
 
         <div className="mt-4 space-y-3">
           <div>

@@ -3,13 +3,15 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 
 import {
   cancelBooking,
+  ensureCsrfCookie,
   createBooking,
   fetchBookings,
   fetchCurrentUser,
   fetchOffers,
+  loginUser,
+  logoutUser,
   payBooking,
   registerUser,
-  type BasicCredentials,
 } from "./api";
 import Header from "./components/Header";
 import AuthPage from "./pages/AuthPage";
@@ -23,7 +25,6 @@ export default function App() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authCredentials, setAuthCredentials] = useState<BasicCredentials | null>(null);
 
   const [loadingOffers, setLoadingOffers] = useState(false);
   const [loadingBookings, setLoadingBookings] = useState(false);
@@ -63,17 +64,11 @@ export default function App() {
     }
   }
 
-  async function loadBookings(credentials?: BasicCredentials) {
-    const activeCredentials = credentials || authCredentials;
-    if (!activeCredentials) {
-      setBookings([]);
-      return;
-    }
-
+  async function reloadBookings() {
     setLoadingBookings(true);
     setError("");
     try {
-      const data = await fetchBookings(activeCredentials);
+      const data = await fetchBookings();
       setBookings(data);
     } catch (err) {
       setError((err as Error).message);
@@ -82,8 +77,26 @@ export default function App() {
     }
   }
 
+  async function loadBookings() {
+    if (!authUser) {
+      setBookings([]);
+      return;
+    }
+
+    await reloadBookings();
+  }
+
   useEffect(() => {
+    ensureCsrfCookie().catch(() => undefined);
     loadOffers();
+
+    fetchCurrentUser()
+      .then((user) => {
+        setAuthUser(user);
+        return fetchBookings();
+      })
+      .then((data) => setBookings(data))
+      .catch(() => undefined);
   }, []);
 
   async function handleRegister(payload: { username: string; email: string; password: string }) {
@@ -103,15 +116,9 @@ export default function App() {
     setError("");
     setAuthMessage("");
 
-    const credentials = {
-      username: payload.username,
-      password: payload.password,
-    };
-
     try {
-      const user = await fetchCurrentUser(credentials);
+      const user = await loginUser(payload);
       setAuthUser(user);
-      setAuthCredentials(credentials);
       setForm((prev) => ({
         ...prev,
         customer_email: user.email || prev.customer_email,
@@ -119,16 +126,16 @@ export default function App() {
       }));
       setAuthMessage(`Eingeloggt als ${user.username}.`);
       setNotice("Login erfolgreich.");
-      await loadBookings(credentials);
+      await reloadBookings();
       navigate("/buchungen");
     } catch (err) {
       setError((err as Error).message);
     }
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    await logoutUser().catch(() => undefined);
     setAuthUser(null);
-    setAuthCredentials(null);
     setBookings([]);
     setAuthMessage("Ausgeloggt.");
     setNotice("Du wurdest ausgeloggt.");
@@ -136,15 +143,15 @@ export default function App() {
   }
 
   async function handleBook() {
-    if (!authCredentials) {
+    if (!authUser) {
       setError("Bitte zuerst einloggen.");
       return false;
     }
 
     setError("");
     try {
-      await createBooking(form, authCredentials);
-      await loadBookings(authCredentials);
+      await createBooking(form);
+      await reloadBookings();
       setNotice("Buchung erfolgreich erstellt.");
       return true;
     } catch (err) {
@@ -154,14 +161,14 @@ export default function App() {
   }
 
   async function handlePay(bookingId: number) {
-    if (!authCredentials) {
+    if (!authUser) {
       setError("Bitte zuerst einloggen.");
       return;
     }
 
     try {
-      await payBooking(bookingId, authCredentials);
-      await loadBookings(authCredentials);
+      await payBooking(bookingId);
+      await reloadBookings();
       setNotice("Zahlung wurde simuliert.");
     } catch (err) {
       setError((err as Error).message);
@@ -169,15 +176,15 @@ export default function App() {
   }
 
   async function handleCancel(bookingId: number) {
-    if (!authCredentials) {
+    if (!authUser) {
       setError("Bitte zuerst einloggen.");
       return;
     }
 
     const reason = prompt("Optionaler Stornogrund", "Plan geändert") || "";
     try {
-      await cancelBooking(bookingId, reason, authCredentials);
-      await loadBookings(authCredentials);
+      await cancelBooking(bookingId, reason);
+      await reloadBookings();
       setNotice("Buchung wurde storniert.");
     } catch (err) {
       setError((err as Error).message);

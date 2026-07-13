@@ -2,31 +2,58 @@ import type { AuthUser, Booking, Offer } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
-export type BasicCredentials = {
-  username: string;
-  password: string;
-};
-
-function buildAuthHeader(credentials?: BasicCredentials) {
-  if (!credentials) {
-    return {} as Record<string, string>;
-  }
-  return {
-    Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`,
-  };
+function getCookie(name: string) {
+  const value = document.cookie
+    .split("; ")
+    .find((entry) => entry.startsWith(`${name}=`))
+    ?.split("=")[1];
+  return value ? decodeURIComponent(value) : "";
 }
 
-async function request<T>(path: string, options?: RequestInit, credentials?: BasicCredentials): Promise<T> {
+function csrfSafeMethod(method = "GET") {
+  return ["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase());
+}
+
+function buildHeaders(options?: RequestInit) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...buildAuthHeader(credentials),
     ...(options?.headers as Record<string, string> | undefined),
   };
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers,
-    ...options,
+  const method = options?.method || "GET";
+  if (!csrfSafeMethod(method)) {
+    const csrfToken = getCookie("csrftoken");
+    if (csrfToken) {
+      headers["X-CSRFToken"] = csrfToken;
+    }
+  }
+
+  return headers;
+}
+
+async function refreshSession() {
+  const response = await fetch(`${API_BASE}/auth/refresh/`, {
+    method: "POST",
+    credentials: "include",
+    headers: buildHeaders({ method: "POST" }),
   });
+
+  return response.ok;
+}
+
+async function request<T>(path: string, options?: RequestInit, retryOnAuthFailure = true): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    ...options,
+    headers: buildHeaders(options),
+  });
+
+  if (response.status === 401 && retryOnAuthFailure && path !== "/auth/refresh/") {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return request<T>(path, options, false);
+    }
+  }
 
   if (!response.ok) {
     let detail = "Unbekannter Fehler";
@@ -56,15 +83,33 @@ export function fetchOffers(filters: {
   return request<Offer[]>(`/offers/?${params.toString()}`);
 }
 
+export function ensureCsrfCookie() {
+  return request<{ detail: string }>("/auth/csrf/", undefined, false);
+}
+
 export function registerUser(payload: { username: string; email: string; password: string }) {
   return request<AuthUser>("/auth/register/", {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }, false);
 }
 
-export function fetchCurrentUser(credentials: BasicCredentials) {
-  return request<AuthUser>("/auth/me/", undefined, credentials);
+export function loginUser(payload: { username: string; password: string }) {
+  return request<AuthUser>("/auth/login/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, false);
+}
+
+export function fetchCurrentUser() {
+  return request<AuthUser>("/auth/me/");
+}
+
+export function logoutUser() {
+  return request<{ detail: string }>("/auth/logout/", {
+    method: "POST",
+    body: JSON.stringify({}),
+  }, false);
 }
 
 export function createBooking(payload: {
@@ -72,31 +117,30 @@ export function createBooking(payload: {
   customer_name: string;
   customer_email: string;
   quantity: number;
-}, credentials: BasicCredentials) {
+}) {
   return request<Booking>("/bookings/", {
     method: "POST",
     body: JSON.stringify(payload),
-  }, credentials);
+  });
 }
 
-export function fetchBookings(credentials: BasicCredentials) {
-  return request<Booking[]>("/bookings/", undefined, credentials);
+export function fetchBookings() {
+  return request<Booking[]>("/bookings/");
 }
 
-export function payBooking(bookingId: number, credentials: BasicCredentials) {
+export function payBooking(bookingId: number) {
   return request<Booking>(`/bookings/${bookingId}/pay/`, {
     method: "POST",
     body: JSON.stringify({}),
-  }, credentials);
+  });
 }
 
-export function cancelBooking(bookingId: number, reason: string, credentials: BasicCredentials) {
+export function cancelBooking(bookingId: number, reason: string) {
   return request<{ booking: Booking; cancellation: { refund_amount: string; reason: string; canceled_at: string } }>(
     `/bookings/${bookingId}/cancel/`,
     {
       method: "POST",
       body: JSON.stringify({ reason }),
     },
-    credentials
   );
 }

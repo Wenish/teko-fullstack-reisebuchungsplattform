@@ -5,7 +5,7 @@ Minimale Fullstack-Reisebuchungsplattform als Monorepo:
 - API-Doku: Swagger (drf-spectacular)
 - Frontend: React + TypeScript + TailwindCSS
 - Datenbank: SQLite
-- Auth: Basic Auth mit Registrierung und Login
+- Auth: JWT ueber HttpOnly-Cookies mit Registrierung, Login, Refresh und Logout
 - Zahlung: nur Simulation (unpaid -> paid)
 
 ## Monorepo-Struktur
@@ -63,7 +63,7 @@ npm run test:run
 ## Kernfunktionen
 
 - Angebote suchen und filtern (Typ, Ort, Preis, Bewertung)
-- Benutzerregistrierung und Login (Basic Auth)
+- Benutzerregistrierung und Login ueber sichere Cookie-Session
 - Buchung erstellen (nur fuer eingeloggte Benutzer)
 - Zahlung simulieren
 - Buchung stornieren mit einfacher Rueckerstattung (80 Prozent)

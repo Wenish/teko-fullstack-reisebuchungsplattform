@@ -1,8 +1,13 @@
+from django.conf import settings
+from django.middleware.csrf import get_token
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 
 from .models import Booking, Cancellation, Offer
 from .serializers import (
@@ -13,6 +18,41 @@ from .serializers import (
     RegisterSerializer,
 )
 from .services import calculate_refund
+
+
+def set_auth_cookies(response, access_token, refresh_token=None):
+    response.set_cookie(
+        settings.JWT_ACCESS_COOKIE_NAME,
+        access_token,
+        httponly=settings.JWT_COOKIE_HTTPONLY,
+        secure=settings.JWT_COOKIE_SECURE,
+        samesite=settings.JWT_COOKIE_SAMESITE,
+        path="/",
+    )
+    if refresh_token is not None:
+        response.set_cookie(
+            settings.JWT_REFRESH_COOKIE_NAME,
+            refresh_token,
+            httponly=settings.JWT_COOKIE_HTTPONLY,
+            secure=settings.JWT_COOKIE_SECURE,
+            samesite=settings.JWT_COOKIE_SAMESITE,
+            path="/",
+        )
+
+
+def clear_auth_cookies(response):
+    response.delete_cookie(settings.JWT_ACCESS_COOKIE_NAME, path="/")
+    response.delete_cookie(settings.JWT_REFRESH_COOKIE_NAME, path="/")
+    return response
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CsrfView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        get_token(request)
+        return Response({"detail": "CSRF cookie gesetzt."})
 
 
 class RegisterView(APIView):
@@ -30,6 +70,48 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(CurrentUserSerializer(request.user).data)
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = TokenObtainPairSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        response = Response(CurrentUserSerializer(serializer.user).data)
+        set_auth_cookies(
+            response,
+            serializer.validated_data["access"],
+            serializer.validated_data["refresh"],
+        )
+        return response
+
+
+class RefreshView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME)
+        if not refresh_token:
+            return Response({"detail": "Refresh-Token fehlt."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        serializer = TokenRefreshSerializer(data={"refresh": refresh_token})
+        serializer.is_valid(raise_exception=True)
+
+        response = Response({"detail": "Token erneuert."})
+        set_auth_cookies(
+            response,
+            serializer.validated_data["access"],
+            serializer.validated_data.get("refresh", refresh_token),
+        )
+        return response
+
+
+class LogoutView(APIView):
+    def post(self, request):
+        response = Response({"detail": "Ausgeloggt."})
+        return clear_auth_cookies(response)
 
 
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):

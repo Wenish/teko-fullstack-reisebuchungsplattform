@@ -1,8 +1,7 @@
-import base64
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import Client, TestCase
 
 from .models import Booking, Offer, Provider
 from .services import calculate_dynamic_unit_price, calculate_refund
@@ -32,6 +31,7 @@ class PriceServiceTests(TestCase):
 
 class BookingApiTests(TestCase):
     def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
         self.user = User.objects.create_user(
             username="max",
             email="max@example.com",
@@ -51,9 +51,21 @@ class BookingApiTests(TestCase):
             available_units=5,
         )
 
-    def _auth_headers(self):
-        token = base64.b64encode(b"max:geheim123").decode("utf-8")
-        return {"HTTP_AUTHORIZATION": f"Basic {token}"}
+    def _csrf_headers(self):
+        self.client.get("/api/auth/csrf/")
+        return {"HTTP_X_CSRFTOKEN": self.client.cookies["csrftoken"].value}
+
+    def _login(self, username="max", password="geheim123"):
+        response = self.client.post(
+            "/api/auth/login/",
+            {"username": username, "password": password},
+            content_type="application/json",
+            **self._csrf_headers(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access_token", response.cookies)
+        self.assertIn("refresh_token", response.cookies)
+        return response
 
     def test_booking_requires_authentication(self):
         response = self.client.post(
@@ -65,10 +77,29 @@ class BookingApiTests(TestCase):
                 "quantity": 1,
             },
             content_type="application/json",
+            **self._csrf_headers(),
         )
         self.assertEqual(response.status_code, 401)
 
+    def test_login_sets_cookie_tokens_and_me_uses_cookie_auth(self):
+        self._login()
+
+        me = self.client.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["username"], "max")
+
+    def test_logout_clears_cookie_tokens(self):
+        self._login()
+
+        logout = self.client.post("/api/auth/logout/", {}, content_type="application/json", **self._csrf_headers())
+        self.assertEqual(logout.status_code, 200)
+
+        me = self.client.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 401)
+
     def test_booking_create_then_cancel(self):
+        self._login()
+
         response = self.client.post(
             "/api/bookings/",
             {
@@ -78,7 +109,7 @@ class BookingApiTests(TestCase):
                 "quantity": 2,
             },
             content_type="application/json",
-            **self._auth_headers(),
+            **self._csrf_headers(),
         )
         self.assertEqual(response.status_code, 201)
 
@@ -90,7 +121,7 @@ class BookingApiTests(TestCase):
             f"/api/bookings/{booking.id}/cancel/",
             {},
             content_type="application/json",
-            **self._auth_headers(),
+            **self._csrf_headers(),
         )
         self.assertEqual(cancel.status_code, 200)
 
@@ -98,15 +129,24 @@ class BookingApiTests(TestCase):
         self.assertEqual(booking.status, Booking.Status.CANCELED)
 
     def test_register_and_me(self):
+        register_headers = self._csrf_headers()
         register = self.client.post(
             "/api/auth/register/",
             {"username": "anna", "email": "anna@example.com", "password": "pass1234"},
             content_type="application/json",
+            **register_headers,
         )
         self.assertEqual(register.status_code, 201)
 
-        token = base64.b64encode(b"anna:pass1234").decode("utf-8")
-        me = self.client.get("/api/auth/me/", **{"HTTP_AUTHORIZATION": f"Basic {token}"})
+        login = self.client.post(
+            "/api/auth/login/",
+            {"username": "anna", "password": "pass1234"},
+            content_type="application/json",
+            **self._csrf_headers(),
+        )
+        self.assertEqual(login.status_code, 200)
+
+        me = self.client.get("/api/auth/me/")
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["username"], "anna")
 
@@ -115,6 +155,8 @@ class BookingApiTests(TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_bookings_list_returns_only_authenticated_users_bookings(self):
+        self._login()
+
         other_user = User.objects.create_user(
             username="other",
             email="other@example.com",
@@ -138,7 +180,7 @@ class BookingApiTests(TestCase):
             total_price=Decimal("200.00"),
         )
 
-        response = self.client.get("/api/bookings/", **self._auth_headers())
+        response = self.client.get("/api/bookings/")
         self.assertEqual(response.status_code, 200)
 
         data = response.json()
